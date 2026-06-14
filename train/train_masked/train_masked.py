@@ -13,7 +13,7 @@ np.random.seed(32)
 # 路徑設定
 ROOT_DIR = Path(__file__).parent.parent.parent
 SUBMISSION_DIR = ROOT_DIR / "submissions"
-MODEL_DIR = ROOT_DIR / "Model"
+MODEL_DIR = ROOT_DIR / "Model" / "lgbm_masked"
 DATA_DIR = ROOT_DIR / "data"
 TEST_DIR = ROOT_DIR / "test"
 
@@ -32,23 +32,6 @@ ACTION_CATEGORY.update({i: 2 for i in range(8,  12)})  # control
 ACTION_CATEGORY.update({i: 3 for i in range(12, 15)})  # defensive
 ACTION_CATEGORY.update({i: 4 for i in range(15, 19)})  # serve
 
-# ══════════════════════════════════════════════════════════════════
-# 1. pointId 空間座標轉換
-#
-#   pointId 1–9 以接球方慣用手為基準的 3×3 九宮格：
-#     x (左右): 1=正手側  2=中路  3=反手側
-#     y (深淺): 1=短球    2=半出台  3=長球
-#
-#   由於 pointId 從「接球方」視角定義，
-#   前一拍落點 x = 下一位擊球者的「來球方向」：
-#     x=1 → 球打到下一擊球者正手位
-#     x=3 → 球打到下一擊球者反手位
-#   結合前一拍 handId 可推斷正斜線：
-#     handId=1(正手)+x=3(打到對方反手) → 正手斜線(cross-court)
-#     handId=1(正手)+x=1(打到對方正手) → 正手直線(down-the-line)
-#     handId=2(反手)+x=1(打到對方正手) → 反手斜線
-#     handId=2(反手)+x=3(打到對方反手) → 反手直線
-# ══════════════════════════════════════════════════════════════════
 def pt_x(pid_series):
     """pointId → 正反手座標 (1=正手 2=中 3=反手)"""
     x = ((pid_series - 1) % 3 + 1).where(pid_series > 0, 0)
@@ -75,7 +58,7 @@ def cross_court_indicator(hand_series, px_series):
     return result.astype(int)
 
 # ══════════════════════════════════════════════════════════════════
-# 2. 讀取資料並合併兩份訓練集
+# 讀取資料並合併兩份訓練集
 #
 #   train.csv            : 主要訓練資料（比賽 ID 1~321，選手 ID 1~196）
 #   processed_train_e.csv: 額外訓練資料（比賽 ID 1~196，選手 ID 1~165）
@@ -95,14 +78,10 @@ PROC_RALLY_OFFSET  = 20000
 PROC_MATCH_OFFSET  = 500
 PROC_PLAYER_OFFSET = 300
 
-# train_e.csv 偏移量（ID 空間與前兩份完全分開）
+# train_k.csv 偏移量（已合併 train_e，ID 空間與前兩份完全分開）
 PROC2_RALLY_OFFSET  = 60000
 PROC2_MATCH_OFFSET  = 1500
 PROC2_PLAYER_OFFSET = 300
-
-# train_k.csv 偏移量（去重後的唯一 rows，ID 空間再分開）
-PROC3_RALLY_OFFSET  = 80000
-PROC3_MATCH_OFFSET  = 2000
 
 def _raw_to_train(df, extra_drop_cols, rally_offset, match_offset):
     """train_e / train_k 原始格式 → 與 train.csv 相容的格式"""
@@ -122,7 +101,6 @@ if __name__ == "__main__":
     print("載入資料...")
     train_main  = pd.read_csv(DATA_DIR / "train.csv")
     train_proc  = pd.read_csv(DATA_DIR / "processed_train_e.csv")
-    train_e_raw = pd.read_csv(DATA_DIR / "train_e.csv")
     train_k_raw = pd.read_csv(DATA_DIR / "train_k.csv")
     test_raw    = pd.read_csv(TEST_DIR / "test_new.csv")
 
@@ -133,44 +111,24 @@ if __name__ == "__main__":
     train_proc["gamePlayerId"]       = 0
     train_proc["gamePlayerOtherId"]  = 0
 
-    # ── train_e.csv：欄位整理 + 偏移 ──────────────────────────────
-    train_e = _raw_to_train(train_e_raw, [], PROC2_RALLY_OFFSET, PROC2_MATCH_OFFSET)
-
-    # ── train_k.csv：先去重再過濾 ─────────────────────────────────
-    # 去重：移除 train_k 中與 train_e 完全相同的 rows（共同欄位比對）
-    _common = [c for c in train_k_raw.columns if c in train_e_raw.columns]
-    _e_tuples = set(map(tuple, train_e_raw[_common].values))
-    _k_in_e   = train_k_raw[_common].apply(lambda r: tuple(r) in _e_tuples, axis=1)
-    train_k_dedup = train_k_raw[~_k_in_e].copy()
-    # 只保留 >1 拍的 rally
-    _k_sizes  = train_k_dedup.groupby("rally_uid").size()
-    _valid_k  = _k_sizes[_k_sizes > 1].index
-    train_k_dedup = train_k_dedup[train_k_dedup["rally_uid"].isin(_valid_k)]
-    train_k = _raw_to_train(train_k_dedup, [], PROC3_RALLY_OFFSET, PROC3_MATCH_OFFSET)
-    print(f"  train_k 去重+過濾   : {len(train_k_dedup)} rows → {train_k.shape} (rally>1拍: {len(_valid_k)})")
+    # ── train_k.csv（已合併 train_e，只保留 >1 拍的 rally）──────────
+    _k_sizes = train_k_raw.groupby("rally_uid").size()
+    _valid_k = _k_sizes[_k_sizes > 1].index
+    train_k_raw = train_k_raw[train_k_raw["rally_uid"].isin(_valid_k)]
+    train_k = _raw_to_train(train_k_raw, [], PROC2_RALLY_OFFSET, PROC2_MATCH_OFFSET)
+    print(f"  train_k（>1拍過濾後）: {train_k.shape} (rally: {len(_valid_k)})")
 
     # train.csv 選手 ID 依 PLAYER_ZERO_PROB 隨機歸零
-    #if PLAYER_ZERO_PROB > 0:
-    #    train_main = train_main.copy()
-    #    train_main.loc[np.random.random(len(train_main)) < PLAYER_ZERO_PROB, "gamePlayerId"]      = 0
-    #    train_main.loc[np.random.random(len(train_main)) < PLAYER_ZERO_PROB, "gamePlayerOtherId"] = 0
+    if PLAYER_ZERO_PROB > 0:
+        train_main = train_main.copy()
+        train_main.loc[np.random.random(len(train_main)) < PLAYER_ZERO_PROB, "gamePlayerId"]      = 0
+        train_main.loc[np.random.random(len(train_main)) < PLAYER_ZERO_PROB, "gamePlayerOtherId"] = 0
 
     # 合併全部來源
-    train_raw = pd.concat([train_main, train_proc, train_e, train_k], ignore_index=True)
+    train_raw = pd.concat([train_main, train_proc, train_k], ignore_index=True)
     train_raw["_no_server_lbl"] = train_raw["_no_server_lbl"].fillna(False)
-    # train.csv / proc 無 serveId / serveNumber，補 0
-    #for _col in ["serveId", "serveNumber"]:
-    #    if _col not in train_raw.columns:
-    #        train_raw[_col] = 0
-    #    else:
-    #        train_raw[_col] = train_raw[_col].fillna(0).astype(int)
     train_raw = train_raw.sort_values(["rally_uid", "strikeNumber"]).reset_index(drop=True)
     test_raw  = test_raw.sort_values(["rally_uid", "strikeNumber"]).reset_index(drop=True)
-    #for _col in ["serveId", "serveNumber"]:
-    #    if _col not in test_raw.columns:
-    #        test_raw[_col] = 0
-    #    else:
-    #        test_raw[_col] = test_raw[_col].fillna(0).astype(int)
 
     # 「已見選手」只包含 train.csv 的選手（test 的 ID 與 train.csv 同空間）
     train_players = (set(train_main["gamePlayerId"].unique()) |
@@ -178,7 +136,6 @@ if __name__ == "__main__":
 
     print(f"  train.csv          : {train_main.shape}")
     print(f"  processed_train_e  : {train_proc.shape}")
-    print(f"  train_e.csv        : {train_e.shape}")
     print(f"  train_k.csv        : {train_k.shape}")
     print(f"  合併後訓練資料      : {train_raw.shape}")
     print(f"  test shape          : {test_raw.shape}")
@@ -410,8 +367,9 @@ def build_features(df: pd.DataFrame,
     _p2 = df[df["strikeNumber"] == 2].groupby("rally_uid")["positionId"].first()
     df["rally_serve_pos"]   = df["rally_uid"].map(_p1).fillna(0).astype(int)
     df["rally_receive_pos"] = df["rally_uid"].map(_p2).fillna(0).astype(int)
+    
     # strikeNumber==1：第 2 拍尚未發生，訓練集不應看到接球站位（測試集也為 0）
-    df.loc[df["strikeNumber"] == 1, "rally_receive_pos"] = 0
+    #df.loc[df["strikeNumber"] == 1, "rally_receive_pos"] = 0
     df["serve_receive_pos_combo"] = df["rally_serve_pos"] * 10 + df["rally_receive_pos"]
 
     return df
@@ -421,18 +379,10 @@ def build_features(df: pd.DataFrame,
 # ══════════════════════════════════════════════════════════════════
 CONTEXT_FEATS = [
     "strikeNumber", "sex", "numberGame",
-    # 當下比分、差距、總和
     "scoreSelf", "scoreOther", "score_diff", "total_score",
-    # 當下小分是發球、接發、前3拍、多拍來回。
     "is_serve", "is_receive", "is_early_rally", "is_clutch",
-    # Lag 可用性（strikeNumber >= 2/3/4 時各 lag 才有真實值）
-    #"lag1_available", "lag2_available", "lag3_available",
-    # 當下戰局狀況
-    "is_deuce", #"is_leading", "is_trailing",
-    "rally_progress", "is_server_turn", #"next_strikeId",
-    # 發球局勢（第幾次發球 / 發球類型），只在 train_e/train_k 來源有值
-    #"rally_serve_number", "rally_serve_id",
-    # 發球與接球站位（positionId 在第 1、2 拍有值，廣播到全 rally）
+    "is_deuce",
+    "rally_progress", "is_server_turn",
     "rally_serve_pos", "rally_receive_pos", "serve_receive_pos_combo",
 ]
 
@@ -440,7 +390,7 @@ CONTEXT_FEATS = [
 CURRENT_FEATS = [
     "handId", "strengthId", "spinId", "positionId", "strikeId",
     "actionId", "pointId",
-    "cur_pt_x", "cur_pt_y",          # 來球落點座標（下一擊球者視角）
+    "cur_pt_x", "cur_pt_y",
     "cur_cross_court", "cur_hand_zone",
     "action_cat",
     "zone_shift_x", "zone_shift_y",
@@ -475,9 +425,7 @@ LAG23_FEATS = [
     "lag2_is_short", "lag2_is_long", "lag2_to_forehand", "lag2_to_backhand",
     "lag3_actionId", "lag3_pointId", "lag3_handId", "lag3_strengthId",
     "lag3_spinId", "lag3_positionId", "lag3_strikeId",
-    "lag3_pt_x", "lag3_pt_y", "lag3_cross_court",
-    # 3-gram 序列特徵（action_transition/point_transition 已在 LAG1_FEATS）
-    "spin_3gram",
+    "lag3_pt_x", "lag3_pt_y", "lag3_cross_court","spin_3gram",
 ]
 
 # 球種模型（前 2 拍：current + lag1）
@@ -579,8 +527,13 @@ if __name__ == "__main__":
         verbose          = -1,
         n_jobs           = -1,
     )
-    PARAMS_ACTION = {**_BASE, "objective": "multiclass", "num_class": 19,
-                     "metric": "multi_logloss", "num_leaves": 127, "n_estimators": 5000}
+    PARAMS_ACTION = {**_BASE, 
+                     "objective": "multiclass", 
+                     "num_class": 19,
+                     "metric": "multi_logloss", 
+                     "num_leaves": 127, 
+                     "n_estimators": 5000
+                    }
     PARAMS_POINT  = {**_BASE, "objective": "multiclass", "num_class": 10,
                      "metric": "multi_logloss", "num_leaves": 127,  "n_estimators": 5000}
     PARAMS_SERVER = {**_BASE, "objective": "binary",
@@ -600,7 +553,7 @@ if __name__ == "__main__":
     # train_e 的 rows 沒有 server 標籤，server 模型排除它們
     has_srv_lbl = (~train_df["_no_server_lbl"].fillna(False).astype(bool)).values
 
-    gkf = StratifiedGroupKFold(n_splits=N_FOLDS, shuffle=True, random_state=32) # 有改這個
+    gkf = StratifiedGroupKFold(n_splits=N_FOLDS, shuffle=True, random_state=32)
     cb  = [lgb.early_stopping(200, verbose=False), lgb.log_evaluation(400)]
 
     oof_action_pred = np.zeros(len(train_df), dtype=int)
@@ -747,9 +700,9 @@ if __name__ == "__main__":
     # ══════════════════════════════════════════════════════════════════
     # 9. 儲存模型權重
     # ══════════════════════════════════════════════════════════════════
-    joblib.dump(models_action, f"{MODEL_DIR}/lgbm_action_folds.pkl")
-    joblib.dump(models_point,  f"{MODEL_DIR}/lgbm_point_folds.pkl")
-    joblib.dump(models_server, f"{MODEL_DIR}/lgbm_server_folds.pkl")
+    joblib.dump(models_action, f"{MODEL_DIR}/lgbm_action_folds_1.pkl")
+    joblib.dump(models_point,  f"{MODEL_DIR}/lgbm_point_folds_1.pkl")
+    joblib.dump(models_server, f"{MODEL_DIR}/lgbm_server_folds_1.pkl")
 
     meta = {
         "action_feat_cols"  : ACTION_FEATS,
@@ -765,7 +718,7 @@ if __name__ == "__main__":
         "proc_match_offset" : PROC_MATCH_OFFSET,
         "proc_player_offset": PROC_PLAYER_OFFSET,
     }
-    joblib.dump(meta, f"{MODEL_DIR}/meta.pkl")
+    joblib.dump(meta, f"{MODEL_DIR}/meta_1.pkl")
 
     print(f"\n模型權重已儲存至 {MODEL_DIR}/")
     print(f"  lgbm_action_folds.pkl  ({N_FOLDS} folds, ensemble 用)")
@@ -797,7 +750,7 @@ if __name__ == "__main__":
         "serverGetPoint": prob_srv,   # 輸出 0–1 機率，不做二值化
     })
 
-    npz_path = MODEL_DIR / "proba_0518_2.npz"
+    npz_path = MODEL_DIR / "proba_masked_1.npz"
     np.savez(
         npz_path,
         rally_uid = test_last["rally_uid"].values,
@@ -807,7 +760,7 @@ if __name__ == "__main__":
     )
     print(f"機率陣列儲存至 {npz_path}")
 
-    out_path = SUBMISSION_DIR / "submission_masked.csv"
+    out_path = SUBMISSION_DIR / "submission_masked_1.csv"
     submission.to_csv(out_path, index=False)
     print(f"Submission 儲存至 {out_path}  (shape: {submission.shape})")
     act_dist = pd.Series(pred_act).value_counts().sort_index()
