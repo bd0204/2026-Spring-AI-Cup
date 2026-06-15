@@ -81,7 +81,11 @@ pointId 1–9 本是接球方視角下的九宮格格位，直接以類別值輸
 
 **資料來源合併**
 
-本方案共使用四份資料：`train.csv`（主要）、`processed_train_e.csv`（額外處理版）、`train_e.csv`、`train_k.csv`。四份資料的 rally_uid / match / gamePlayerId 均從 1 開始計數，直接合併會造成同一 ID 指向不同對象的衝突，因此對每份額外資料加上偏移量使 ID 空間完全不重疊：
+本方案共使用四份資料：`train.csv`（主要）、`processed_train_e.csv`（額外處理版）、`train_e.csv`、`train_k.csv`。
+
+1. 四份資料的 rally_uid / match / gamePlayerId 均從 1 開始計數，直接合併會造成同一 ID 指向不同對象的衝突，因此對每份額外資料加上偏移量使 ID 空間完全不重疊：
+
+移除train_k中的serveID,
 
 | 資料集 | rally_uid 偏移 | match 偏移 |
 |---|---|---|
@@ -89,7 +93,11 @@ pointId 1–9 本是接球方視角下的九宮格格位，直接以類別值輸
 | train_e | +60000 | +1500 |
 | train_k | +80000 | +2000 |
 
-`train_k` 在合併前另需去重（移除與 train_e 完全相同的 rows）並過濾掉只有 1 拍的 rally。
+2.  train_k與train_e均移除rally_id, let, serverGetPoint, serveId, serveNumber這四個欄位
+3. `train_k` 在合併前另需去重（移除與 train_e 完全相同的 rows）並過濾掉只有 1 拍的 rally。
+4. 除了train之外另外三份資料均將playerID歸0，因為這些是外部資料，與test中的id無關。
+5. train_e與train_k中的serverGetPoint移除，不加入訓練。
+
 
 **選手 ID 遮蔽策略（兩個模型差異所在）**
 
@@ -176,6 +184,10 @@ Lag 特徵以 `groupby("rally_uid").shift(k).fillna(0)` 計算，rally 開頭資
 
 測試集每個 rally 取最後一拍（`groupby("rally_uid").tail(1)`）作為特徵輸入，預測該 rally 的下一拍戰術與結果。
 
+**模型訓練資料**
+- action與point模型使用train、train_process、train_k、train_e訓練。
+- sever模型只使用train、train_process訓練。
+
 ## Approach
 
 ### LGBM的訓練方式為以下的流程。
@@ -221,4 +233,19 @@ masked模型則不把id放入訓練，模型只會從動作的模式，比賽的
 
 2. 目前只有針對測試集只有做統計，並沒有分析資料集中是否有不完整比賽等雜訊，且多數桌球比賽約在5-6拍便會結束，可以嘗試過濾掉大於10拍的rally，這些可能會影響模型的分類判斷。
 
+3. 只有要預測第二拍與第三拍的訓練資料，因為資訊量太少，導致預測時actin與point的accurancy明顯相較預測第5到第20拍的來的低，且test中要預測第二與第三拍的資料佔了45%，導致在LB上分數不高，但因為預測短拍本來就會比較困難，未來可能調整將預測n=2,3,4的資料另外獨立訓練一個模型，減少因為受到中長拍資料影響的決策。
+
+Per-strikeNumber 答對率（預測第 strikeNumber+1 拍）:
+    sn      樣本數  action_acc  point_acc
+     1   30,382      0.6967     0.5954
+     2   26,488      0.7721     0.6256
+     3   21,180      0.7941     0.6329
+     4   15,115      0.7995     0.6510
+     5   11,135      0.7976     0.6506
+     6    7,926      0.8121     0.6665
+     7    5,907      0.8163     0.6562
+     8    4,303      0.8206     0.6788
+     9    3,262      0.8375     0.6934
+
+4. 目前獨立訓練三個模型對應三項任務，但action的結果與point的預測高度相關，攻擊與防守會出現的落點會有所不同，未來會嘗試針對每一筆訓練資料中，point的特徵新增一欄下一拍的action，預測test時也先預測該筆的action，將這個結果加入point特徵進行預測。保留預測拍中action與point的關聯性
 

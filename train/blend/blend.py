@@ -18,8 +18,8 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-FILE_A = ROOT_DIR / "Model" / "lgbm_masked" / "proba_masked_1.npz"   # first model
-FILE_B = ROOT_DIR / "Model" / "lgbm_unmasked" / "proba_unmasked_1.npz"     # second model
+FILE_A = ROOT_DIR / "Model" / "lgbm_masked" / "proba_masked.npz"   # first model
+FILE_B = ROOT_DIR / "Model" / "lgbm_unmasked" / "proba_unmasked.npz"     # second model
 
 WEIGHT_A = 0.30   # weight for FILE_A  (must sum to 1 with WEIGHT_B)
 WEIGHT_B = 0.70   # weight for FILE_B
@@ -32,8 +32,8 @@ BLEND_WINNER = True
 # When a task switch is False, use this file's prediction: "A" or "B"
 FALLBACK = "B"
 
-OUTPUT_CSV  = ROOT_DIR / "submissions" / "submission_blend_lgbm_1.csv"
-OUTPUT_NPZ  = ROOT_DIR / "Model" / "proba_blend_lgbm_1.npz"
+OUTPUT_CSV  = ROOT_DIR / "submissions" / "submission_blend_lgbm.csv"
+OUTPUT_NPZ  = ROOT_DIR / "Model" / "proba_blend_lgbm.npz"
 
 # ─── Load ─────────────────────────────────────────────────────────────────────
 
