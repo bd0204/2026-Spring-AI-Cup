@@ -143,6 +143,14 @@ complementary (per-rally disagreement ≈ 38% on action, ≈ 53% on point), so t
 
 ## 6. ⭐ Reproduction Pipeline
 
+Two ways to reproduce:
+
+- **Option A — from scratch:** run Steps 1–4 below (train → inference → ensemble → fuse).
+- **Option B — skip training, use released weights:** download `transformer_weights.zip`
+  from this repo's **[Releases](../../releases)** and unzip it into the project root. You will get
+  `ckpt_v38/`, `ckpt_v40/`, `ckpt_v41/` (5 `fold*.pt` each) and `checkpoints/known_player_ids.json`.
+  Then **skip Step 1 and start from Step 2** (inference → ensemble → fuse).
+
 ### Step 1 — Train all three Transformer versions (5-fold each)
 
 Run once for **v41 / v40 / v38** (edit `config.py` per the table in §5, then rename the produced
@@ -259,4 +267,3 @@ unseen rally:
 | `hybrid_blend.py` | NN ensemble × LGBM fusion (action/point = pure LGBM; serverGetPoint = rank-conditional) → final submission |
 
 **LGBM branch:** see the teammate repo `2026-Spring-AI-Cup-ckt1022_lgbm` (provides `proba_blend_lgbm.npz`).
-
