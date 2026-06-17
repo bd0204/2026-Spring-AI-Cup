@@ -1,0 +1,7 @@
+# Transformer 分支環境（訓練於 NVIDIA V100, CUDA 11.8）
+# torch 請依 CUDA 版本安裝，例如：
+#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+torch==2.7.1
+numpy==1.26.4
+pandas==2.3.3
+scikit-learn==1.7.2
