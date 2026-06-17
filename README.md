@@ -1,16 +1,9 @@
-# 2026 Spring AI CUP — Table-Tennis Tactic & Outcome Prediction (Transformer Branch)
+# 2026 Spring AI CUP — Transformer Branch
 
-> **Task.** Given the first *k* strokes (prefix) of a rally, predict the **next stroke's**
-> `actionId` (shot type, 19 classes), `pointId` (landing zone, 10 classes), and
-> `serverGetPoint` (probability that the serving side wins the point).
-> **Official metric:** `Score = 0.4 × Macro-F1(action) + 0.4 × Macro-F1(point) + 0.2 × AUC(serverGetPoint)`
-
-This repository is the **Transformer branch** of our team's solution. The final submission
+This repository is the **Transformer branch**. The final submission
 fuses this branch with our teammate's **LGBM branch**.
 
-**Final standing — Private Leaderboard: `0.3834716` (Rank 10).**
-The same hybrid submission scored `0.5618189` (Rank 2) on the public leaderboard; the
-public→private gap reflects a leaderboard shake-up. The final ranking follows the private score.
+**Private Leaderboard: `0.3834716` (Rank 10).**
 
 ---
 
@@ -32,14 +25,11 @@ public→private gap reflects a leaderboard shake-up. The final ranking follows 
                     │                       │
                     ▼                       ▼
               hybrid_blend.py  (final fusion)
-   actionId/pointId = LGBM ; serverGetPoint = NN × LGBM (rank-conditional)
+   actionId/pointId = LGBM ; serverGetPoint = transformer × LGBM (rank-conditional)
                     │
                     ▼
-              submission.csv  (Public 0.5618 / Private 0.3834716)
+              submission.csv
 ```
-
-The Transformer branch contributes mainly through **`serverGetPoint` (winner)** in the final
-fusion; `actionId` / `pointId` are taken from LGBM (see §7).
 
 ---
 
@@ -66,7 +56,7 @@ Place the following in the project root:
 | `train.csv` | official | main training data |
 | `test_new.csv` | official | prediction target (inference) |
 | `test.csv` | official | training-time alignment (IPW / fold split) |
-| `processed_train_e.csv` | processed official extra set | "all-unseen-player" extra training data |
+| `processed_train_e.csv` | Kaggle | "all-unseen-player" extra training data |
 | `proba_blend_lgbm.npz` | **teammate LGBM branch** | required for final fusion (read by `hybrid_blend.py`) |
 
 > `proba_blend_lgbm.npz` is produced by the teammate repo `2026-Spring-AI-Cup-ckt1022_lgbm`
@@ -101,7 +91,7 @@ Place the following in the project root:
 
 The three versions **share the same `model.py` and `train.py`**; they differ only in a few
 `config.py` switches — they are progressive upgrades of one architecture, deliberately kept
-different so the final ensemble gains diversity (variance reduction).
+different so the final ensemble gains diversity.
 
 The current `config.py` defaults are **v41**. To reproduce the other two, change only the
 fields below:
@@ -120,24 +110,6 @@ fields below:
 All other hyper-parameters are identical across the three: `class_balance_power=0.5`,
 `class_balance_target="action"`, `player_id_dropout=0.5`, `dropout=0.2`, `max_seq_len=60`,
 `batch_size=128`, `lr=5e-4`, `weight_decay=1e-4`, `patience=15`.
-
-**Design progression:**
-
-- **v38** — adds, to the `action` and `winner` heads, a *long-view* (masked-mean over the whole
-  rally → Linear, to capture long-range patterns the short TAA window misses) and a *short-prefix
-  expert* (a gated MLP that corrects predictions when `seq_len ≤ 2`, since 53% of test rallies have
-  only 1–2 strokes). The `point` head is still the basic version here.
-- **v40** — mirrors the same long-view + short-expert onto the `point` head, and raises `epochs`
-  from 120 to 130. *(An intermediate v39 also changed `class_balance_power 0.4` + `target "both"` +
-  `epochs 160` and overfit; v40 rolls those back and keeps only the clean point-head upgrade.)*
-- **v41** — adds `fp_action_prior`: the fingerprint action-histogram of the **next stroke's striker**
-  is fed through a gated MLP and **added directly to the action logits**, bypassing the encoder's
-  dilution, to target the hard-to-generalize "shot choice = player tactical habit" signal.
-
-**Public LB of each version alone (Transformer only):** v38 = 0.3773, v40 = 0.3725, v41 = 0.3758.
-Individually they sit around 0.37–0.38, but because the architectures differ their predictions are
-complementary (per-rally disagreement ≈ 38% on action, ≈ 53% on point), so the **ensemble reaches
-0.3885**.
 
 ---
 
@@ -170,11 +142,8 @@ mv ./checkpoints ./ckpt_v40
 qsub train_job.sh
 mv ./checkpoints ./ckpt_v38
 ```
-> `train.py` has fold-level resume: if the 12 h PBS walltime cuts a job off, re-`qsub` and it skips
-> finished folds and continues. `known_player_ids.json` is written to `./checkpoints/` (version-independent)
-> and is used at inference to mask unseen players.
 
-### Step 2 — Inference each version, save raw NN proba
+### Step 2 — Inference each version
 
 For each version set `config.py`'s **architecture switches back to that version's values** (must
 match training, otherwise the checkpoint won't load), and set the weight source / output path:
@@ -196,15 +165,14 @@ and so on). You should end up with `proba_v38_nn.npz`, `proba_v40_nn.npz`, `prob
 ```bash
 python ensemble_proba.py
 ```
-- Arithmetic mean of the three versions' raw proba (`FUSION_MODE="arithmetic"`; note: geometric mean
-  was tried and scored 0.3867 < 0.3885 — arithmetic is more stable for this high-variance task), then
+- Arithmetic mean of the three versions' raw proba (`FUSION_MODE="arithmetic"`), then
   a prior shift on action/point before argmax, and a plain average for winner.
-- Produces the pure-NN `submission.csv` (LB 0.3885) and **`proba_ensemble_nn.npz`** (fused
+- Produces the pure-transformer `submission.csv` and **`proba_ensemble_nn.npz`** (fused
   probabilities, used in the next step).
 
-### Step 4 — Fuse with LGBM (final submission)
+### Step 4 — Fuse with LGBM
 
-Put the teammate's `proba_blend_lgbm.npz` in the project root, then:
+Put the `proba_blend_lgbm.npz` from ckt1022_lgbm branch in the project root, then:
 
 ```bash
 python hybrid_blend.py    # → submission.csv (final)
@@ -212,13 +180,13 @@ python hybrid_blend.py    # → submission.csv (final)
 
 ---
 
-## 7. ⭐ LGBM Fusion Details (`hybrid_blend.py`)
+## 7. LGBM Fusion Details
 
 The three columns of the final `submission.csv` come from **different sources**:
 
 | Column | Source | How |
 |---|---|---|
-| `actionId` | **LGBM only** | argmax of LGBM action proba (NN is weaker on action; blending dilutes it) |
+| `actionId` | **LGBM only** | argmax of LGBM action proba (Transformer is weaker on action) |
 | `pointId` | **LGBM only** | argmax of LGBM point proba (same reason) |
 | `serverGetPoint` | **Transformer × LGBM** | **rank-conditional fusion** (below) |
 
@@ -235,21 +203,15 @@ unseen rally:
 
 - Fusion happens entirely in **rank space**, avoiding probability-scale (calibration) mismatch
   between the two models.
-- It is **conditional** (NN is mixed in only when both players were seen in training): the NN winner
-  has OOF AUC ≈ 0.86 on seen players vs ≈ 0.73 on unseen ones, and the NN↔LGBM winner rank
-  correlation is only 0.45 (high diversity), so blending helps on seen rallies while unseen rallies
-  stay pure-LGBM.
+- It is **conditional** (transformer is mixed in only when both players were seen in training)
 - `seen` is decided by `build_seen()`: every stroke's `gamePlayerId` and `gamePlayerOtherId` in the
   rally must appear in `known_player_ids.json`.
-
-> On the public leaderboard this lifted the score from pure LGBM (0.561) to 0.5618 — the
-> Transformer's winner diversity gives a positive contribution to `serverGetPoint`.
 
 ---
 
 ## 8. File List
 
-**Core Transformer (train / inference)**
+**Core Transformer**
 | File | Description |
 |---|---|
 | `config.py` | all hyper-parameters and architecture switches (defaults = v41) |
@@ -260,10 +222,10 @@ unseen rally:
 | `inference.py` | ensemble inference; outputs a submission or raw proba npz |
 | `train_job.sh` / `infer_job.sh` | PBS job scripts |
 
-**Fusion (produces the final submission)**
+**Fusion**
 | File | Description |
 |---|---|
-| `ensemble_proba.py` | fuse v38/v40/v41 raw proba → pure-NN submission + `proba_ensemble_nn.npz` |
-| `hybrid_blend.py` | NN ensemble × LGBM fusion (action/point = pure LGBM; serverGetPoint = rank-conditional) → final submission |
+| `ensemble_proba.py` | fuse v38/v40/v41 raw proba → pure-transformer submission + `proba_ensemble_nn.npz` |
+| `hybrid_blend.py` | transformer × LGBM fusion (action/point = pure LGBM; serverGetPoint = rank-conditional) → final submission |
 
-**LGBM branch:** see the teammate repo `2026-Spring-AI-Cup-ckt1022_lgbm` (provides `proba_blend_lgbm.npz`).
+**LGBM branch:** see the repo `2026-Spring-AI-Cup-ckt1022_lgbm`.
