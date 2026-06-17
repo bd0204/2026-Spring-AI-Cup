@@ -1,0 +1,42 @@
+# ───────── Python ─────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ───────── training log ─────────
+*.out
+*.err
+
+# ───────── model weights ─────────
+*.pt
+checkpoints/
+ckpt_*/
+pt/
+
+# ───────── probability ─────────
+*.npz
+
+# ───────── dataset ─────────
+train.csv
+test.csv
+test_new.csv
+processed_train_e.csv
+train_e.csv
+train_k.csv
+
+# ───────── submission ─────────
+submission*.csv
+!sample_submission.csv
+
+# ───────── lgbm ─────────
+model0528/
+model_dafu/
+
+# ───────── official ─────────
+baseline code_0413/
+auxiliary/
+report/
+variable_definition/
+pointId_and_positionId_definition/
+*.pdf
+*.zip
